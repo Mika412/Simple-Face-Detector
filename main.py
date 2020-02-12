@@ -16,6 +16,8 @@ class FaceDetector:
 		self.face_cascade = cv2.CascadeClassifier('models/haarcascade_frontalface_default.xml')
 		self.load_people()
 
+		self.previous_frame_faces = []
+
 
 	def preprocess_input(self, x, data_format=None, version=1):
 		x_temp = np.copy(x)
@@ -89,12 +91,42 @@ class FaceDetector:
 			print(path + " " + str(len(embeddings)))
 			self.people.append({'Name': path, 'Embeddings': embeddings})
 
+	def overlap_area(self, x1, y1, h1, w1, x2,y2, h2,w2):  # returns None if rectangles don't intersect
+		dx = min(x1+w1, x2+w2) - max(x1, x2)
+		dy = min(x1+h1, x2+h2) - max(y1, y2)
+		if (dx>=0) and (dy>=0):
+			return dx*dy / (h1*w1)
+	def intersection(self,a,b):
+		x = max(a[0], b[0])
+		y = max(a[1], b[1])
+		w = min(a[0]+a[2], b[0]+b[2]) - x
+		h = min(a[1]+a[3], b[1]+b[3]) - y
+		if w<0 or h<0: return (0,0,0,0), 0 # or (0,0,0,0) ?
+		return (x, y, w, h), (w*h)/(a[2]*a[3])
+
 	def detectFace(self, img):
 		face_cord, faces =  self.extract_faces(img)
-
+		
+		detected_people = []
+		unknown_faces = []
 		for i in range(len(faces)):
 			(x,y,w,h) = face_cord[i]
-			img = cv2.rectangle(img,(x,y),(x+w,y+h),(255,0,0),2)
+			has_detected = False
+			detected_name = ""
+			for j in range(len(self.previous_frame_faces)):
+				(x2, y2, w2, h2, detected_name) = self.previous_frame_faces[j]
+				_, int_perc = self.intersection((x,y,w,h),(x2,y2,w2,h2))
+
+				if int_perc > 0.6:
+					has_detected = True
+					break
+			if has_detected:
+				detected_people.append((x,y,w,h, detected_name))
+			else:
+				unknown_faces.append(i)
+		
+		for i in unknown_faces:
+			(x,y,w,h) = face_cord[i]
 			embedding = self.get_embeddings(faces[i])
 
 			potential_people = []
@@ -103,9 +135,17 @@ class FaceDetector:
 				if isMatch:
 					potential_people.append([person['Name'], score])
 			if len(potential_people) > 0:
-				cv2.putText(img, potential_people[0][0][7:], (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
+				detected_people.append((x,y,w,h, potential_people[0][0][7:]))
 			else:
-				cv2.putText(img, 'Unknown', (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
+				detected_people.append((x,y,w,h, 'Unknown'))
+				
+		print(detected_people)
+
+		self.previous_frame_faces = detected_people
+		for i in range(len(detected_people)):
+			(x,y,w,h, name) = detected_people[i]
+			img = cv2.rectangle(img,(x,y),(x+w,y+h),(255,0,0),2)
+			cv2.putText(img, name, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
 		return img
 
 def main():
